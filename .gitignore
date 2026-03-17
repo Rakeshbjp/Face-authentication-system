@@ -34,3 +34,9 @@ app.log
 tmp/
 temp/
 .vercel
+
+# MongoDB local data
+data/
+
+# Production env
+.env.production
