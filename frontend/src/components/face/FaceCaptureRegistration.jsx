@@ -1,269 +1,426 @@
 /**
- * FaceCaptureRegistration — Multi-directional face capture for user registration.
+ * FaceCaptureRegistration — Live face detection + auto-capture.
  *
- * Guides the user through capturing their face from 4 directions:
- * Front, Left, Right, and Up/Down.
- * Returns 4 base64 images to the parent component.
+ * Detects face in real-time using canvas skin-tone analysis.
+ * Only captures when a face is clearly detected.
+ * Shows real-time feedback: searching → detected → countdown → captured.
  */
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import useCamera from '../../hooks/useCamera';
-import StatusBadge from '../ui/StatusBadge';
 
 const DIRECTIONS = [
-  { id: 'front', label: 'Look Straight Ahead', icon: '😐', instruction: 'Position your face in the center of the frame and look directly at the camera.' },
-  { id: 'left', label: 'Turn Left', icon: '👈', instruction: 'Slowly turn your head to the LEFT. Keep your face visible.' },
-  { id: 'right', label: 'Turn Right', icon: '👉', instruction: 'Slowly turn your head to the RIGHT. Keep your face visible.' },
-  { id: 'updown', label: 'Look Up then Down', icon: '👆', instruction: 'Slowly tilt your head UP, then bring it back DOWN.' },
+  { id: 'front', label: 'Look Straight Ahead', icon: '😐', instruction: 'Look directly at the camera' },
+  { id: 'left', label: 'Turn Left', icon: '👈', instruction: 'Slowly turn your head to the left' },
+  { id: 'right', label: 'Turn Right', icon: '👉', instruction: 'Slowly turn your head to the right' },
+  { id: 'updown', label: 'Tilt Up & Down', icon: '👆', instruction: 'Slowly tilt your head up, then down' },
 ];
+
+const HOLD_SECONDS = 3;
 
 const FaceCaptureRegistration = ({ onCaptureComplete, onCancel }) => {
   const { videoRef, isActive, error, startCamera, stopCamera, captureImage } = useCamera({ autoStart: true });
+
   const [currentStep, setCurrentStep] = useState(0);
   const [capturedImages, setCapturedImages] = useState([]);
-  const [countdown, setCountdown] = useState(null);
-  const [status, setStatus] = useState('idle');
+  const [phase, setPhase] = useState('waiting'); // waiting | countdown | captured | done
+  const [countdown, setCountdown] = useState(HOLD_SECONDS);
+  const [faceDetected, setFaceDetected] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 
-  // Refs to always read the latest values inside async callbacks
-  const currentStepRef = useRef(currentStep);
-  const capturedImagesRef = useRef(capturedImages);
-  const timerRef = useRef(null);
+  // Refs to avoid stale closures in timers/intervals
+  const capturedRef = useRef([]);
+  const currentStepRef = useRef(0);
+  const phaseRef = useRef('waiting');
+  const countdownTimerRef = useRef(null);
+  const transitionTimerRef = useRef(null);
+  const detectionTimerRef = useRef(null);
+  const mountedRef = useRef(true);
+  const consecutiveRef = useRef(0);
+  const captureImageRef = useRef(captureImage);
+  const onCaptureCompleteRef = useRef(onCaptureComplete);
 
+  // Keep refs in sync with latest values
   useEffect(() => { currentStepRef.current = currentStep; }, [currentStep]);
-  useEffect(() => { capturedImagesRef.current = capturedImages; }, [capturedImages]);
+  useEffect(() => { capturedRef.current = capturedImages; }, [capturedImages]);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
+  useEffect(() => { captureImageRef.current = captureImage; }, [captureImage]);
+  useEffect(() => { onCaptureCompleteRef.current = onCaptureComplete; }, [onCaptureComplete]);
 
-  // Clean up timer on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      mountedRef.current = false;
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+      if (detectionTimerRef.current) clearTimeout(detectionTimerRef.current);
     };
   }, []);
 
   /**
-   * Retry camera access with a delay so the camera driver can release.
+   * Detect face presence by analysing skin-tone pixels in the centre of the video.
    */
+  const detectFace = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || video.videoWidth === 0) return false;
+
+    try {
+      const canvas = document.createElement('canvas');
+      const sz = 120;
+      canvas.width = sz;
+      canvas.height = sz;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+      // Crop the center 50% of the video (where the face guide is)
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+      ctx.drawImage(video, vw * 0.25, vh * 0.15, vw * 0.5, vh * 0.7, 0, 0, sz, sz);
+      const { data } = ctx.getImageData(0, 0, sz, sz);
+
+      let skin = 0;
+      let total = 0;
+
+      for (let i = 0; i < data.length; i += 16) { // Sample every 4th pixel
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        total++;
+        if (r > 60 && g > 40 && b > 20 && r > g && r > b && (r - g) > 10 && (r - b) > 15) {
+          skin++;
+        }
+      }
+
+      return (skin / total) > 0.08;
+    } catch {
+      return false;
+    }
+  }, [videoRef]);
+
+  /**
+   * Perform capture, save image, advance to next step.
+   * Uses refs so it always reads the latest state.
+   */
+  const doCapture = useCallback(() => {
+    if (!mountedRef.current) return;
+
+    // Stop detection during transition
+    if (detectionTimerRef.current) {
+      clearTimeout(detectionTimerRef.current);
+      detectionTimerRef.current = null;
+    }
+
+    const image = captureImageRef.current();
+    if (!image) {
+      // Failed — reset to waiting
+      setPhase('waiting');
+      phaseRef.current = 'waiting';
+      setCountdown(HOLD_SECONDS);
+      consecutiveRef.current = 0;
+      return;
+    }
+
+    const newImages = [...capturedRef.current, image];
+    setCapturedImages(newImages);
+    capturedRef.current = newImages;
+    setPhase('captured');
+    phaseRef.current = 'captured';
+
+    const step = currentStepRef.current;
+
+    if (step < DIRECTIONS.length - 1) {
+      transitionTimerRef.current = setTimeout(() => {
+        if (!mountedRef.current) return;
+        const next = step + 1;
+        setCurrentStep(next);
+        currentStepRef.current = next;
+        setPhase('waiting');
+        phaseRef.current = 'waiting';
+        setCountdown(HOLD_SECONDS);
+        setFaceDetected(false);
+        consecutiveRef.current = 0;
+      }, 1200);
+    } else {
+      setPhase('done');
+      phaseRef.current = 'done';
+      transitionTimerRef.current = setTimeout(() => {
+        if (!mountedRef.current) return;
+        onCaptureCompleteRef.current(newImages);
+      }, 800);
+    }
+  }, []); // No deps needed — everything uses refs
+
+  /**
+   * Main detection + countdown loop.
+   * Runs every 200ms while camera is active and we're in waiting/countdown phase.
+   */
+  useEffect(() => {
+    if (!isActive) return;
+
+    // Only run detection in waiting or countdown phases
+    if (phase === 'captured' || phase === 'done') return;
+
+    let countValue = HOLD_SECONDS;
+    let countdownRunning = false;
+    let lastTickTime = 0;
+
+    const tick = () => {
+      if (!mountedRef.current) return;
+
+      const currentPhase = phaseRef.current;
+      if (currentPhase === 'captured' || currentPhase === 'done') return;
+
+      const hasFace = detectFace();
+
+      if (hasFace) {
+        consecutiveRef.current++;
+        setFaceDetected(true);
+
+        if (consecutiveRef.current >= 2 && !countdownRunning) {
+          // Face stably detected — start countdown
+          countdownRunning = true;
+          countValue = HOLD_SECONDS;
+          setPhase('countdown');
+          phaseRef.current = 'countdown';
+          setCountdown(countValue);
+          lastTickTime = Date.now();
+        }
+
+        if (countdownRunning) {
+          const now = Date.now();
+          if (now - lastTickTime >= 1000) {
+            countValue -= 1;
+            setCountdown(countValue);
+            lastTickTime = now;
+
+            if (countValue <= 0) {
+              // CAPTURE!
+              countdownRunning = false;
+              doCapture();
+              return; // Stop the loop — doCapture handles the transition
+            }
+          }
+        }
+      } else {
+        consecutiveRef.current = 0;
+        setFaceDetected(false);
+
+        if (countdownRunning) {
+          // Face lost during countdown — reset
+          countdownRunning = false;
+          countValue = HOLD_SECONDS;
+          setPhase('waiting');
+          phaseRef.current = 'waiting';
+          setCountdown(HOLD_SECONDS);
+        }
+      }
+
+      detectionTimerRef.current = setTimeout(tick, 200);
+    };
+
+    // Start the detection loop after a brief delay
+    detectionTimerRef.current = setTimeout(tick, 300);
+
+    return () => {
+      if (detectionTimerRef.current) {
+        clearTimeout(detectionTimerRef.current);
+        detectionTimerRef.current = null;
+      }
+    };
+  }, [isActive, phase, currentStep, detectFace, doCapture]);
+
   const handleRetryCamera = useCallback(async () => {
     setRetryCount((c) => c + 1);
-    // Stop first, wait, then start — gives the hardware time to release
     stopCamera();
     await new Promise((r) => setTimeout(r, 500));
     startCamera();
   }, [startCamera, stopCamera]);
 
-  /**
-   * Capture the current frame after a short countdown.
-   */
-  const handleCapture = useCallback(() => {
-    if (!isActive || status === 'scanning' || status === 'verified') return;
-
-    setCountdown(3);
-    setStatus('scanning');
-
-    let count = 3;
-    timerRef.current = setInterval(() => {
-      count -= 1;
-      setCountdown(count);
-
-      if (count <= 0) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-
-        const image = captureImage();
-        if (image) {
-          const step = currentStepRef.current;
-          const prevImages = capturedImagesRef.current;
-          const newImages = [...prevImages, image];
-
-          setCapturedImages(newImages);
-          capturedImagesRef.current = newImages;
-          setStatus('verified');
-
-          if (step < DIRECTIONS.length - 1) {
-            setTimeout(() => {
-              const nextStep = step + 1;
-              setCurrentStep(nextStep);
-              currentStepRef.current = nextStep;
-              setStatus('idle');
-              setCountdown(null);
-            }, 1000);
-          } else {
-            setTimeout(() => {
-              onCaptureComplete(newImages);
-            }, 500);
-          }
-        } else {
-          setStatus('failed');
-          setCountdown(null);
-        }
-      }
-    }, 1000);
-  }, [isActive, status, captureImage, onCaptureComplete]);
-
-  const handleRetry = useCallback(() => {
-    setStatus('idle');
-    setCountdown(null);
-  }, []);
-
-  // ── Camera error state ──
+  // ── Camera error ──
   if (error) {
     return (
       <div className="text-center p-8">
         <div className="text-red-500 mb-4">
           <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-              d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"
-            />
+              d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
           </svg>
         </div>
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Camera Access Required</h3>
         <p className="text-gray-600 mb-4">{error}</p>
-        <div className="flex flex-col items-center gap-3">
-          <button
-            onClick={handleRetryCamera}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Try Again {retryCount > 0 ? `(Attempt ${retryCount + 1})` : ''}
-          </button>
-          <p className="text-xs text-gray-400 max-w-xs">
-            Close any other app using the camera (Zoom, Teams, etc.) and try again.
-            If you just granted permission, wait a moment and retry.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // ── Camera starting state ──
-  if (!isActive && !error) {
-    return (
-      <div className="text-center p-8">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
-          <p className="text-gray-600 font-medium">Starting camera...</p>
-          <p className="text-xs text-gray-400">Please allow camera access when prompted</p>
-        </div>
+        <button onClick={handleRetryCamera}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+          Try Again {retryCount > 0 ? `(Attempt ${retryCount + 1})` : ''}
+        </button>
       </div>
     );
   }
 
   const direction = DIRECTIONS[currentStep] || DIRECTIONS[0];
+  const isCaptured = phase === 'captured';
+  const isDone = phase === 'done';
+  const isCountdown = phase === 'countdown';
+
+  const guideColor = isCaptured
+    ? 'border-green-400 shadow-[0_0_30px_rgba(74,222,128,0.5)]'
+    : isCountdown
+    ? 'border-green-400 animate-pulse shadow-[0_0_20px_rgba(74,222,128,0.4)]'
+    : faceDetected
+    ? 'border-green-400 shadow-[0_0_15px_rgba(74,222,128,0.3)]'
+    : 'border-blue-300/60';
+
+  const statusMsg = isDone
+    ? { text: '✅ All captures complete!', cls: 'bg-green-100 text-green-700' }
+    : isCaptured
+    ? { text: '✅ Captured! Moving to next...', cls: 'bg-green-100 text-green-700' }
+    : isCountdown
+    ? { text: `😊 Face detected! Capturing in ${countdown}...`, cls: 'bg-green-100 text-green-700' }
+    : faceDetected
+    ? { text: '✅ Face found! Hold still...', cls: 'bg-green-100 text-green-700' }
+    : { text: '👤 Position your face inside the oval', cls: 'bg-blue-100 text-blue-700' };
 
   return (
     <div className="w-full max-w-lg mx-auto">
-      {/* Progress indicator */}
-      <div className="flex items-center justify-between mb-6">
+      {/* Progress */}
+      <div className="flex items-center justify-between mb-5">
         {DIRECTIONS.map((d, i) => (
           <div key={d.id} className="flex items-center">
-            <div
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
-                i < currentStep
-                  ? 'bg-green-500 text-white'
-                  : i === currentStep
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-200 text-gray-500'
-              }`}
-            >
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-all duration-300 ${
+              i < currentStep ? 'bg-green-500 text-white scale-90'
+                : i === currentStep ? 'bg-blue-600 text-white ring-4 ring-blue-200 scale-110'
+                : 'bg-gray-200 text-gray-400'
+            }`}>
               {i < currentStep ? '✓' : i + 1}
             </div>
             {i < DIRECTIONS.length - 1 && (
-              <div className={`w-12 sm:w-16 h-1 mx-1 rounded ${i < currentStep ? 'bg-green-500' : 'bg-gray-200'}`} />
+              <div className={`w-10 sm:w-16 h-1 mx-1 rounded transition-colors duration-500 ${i < currentStep ? 'bg-green-500' : 'bg-gray-200'}`} />
             )}
           </div>
         ))}
       </div>
 
       {/* Instruction */}
-      <div className="text-center mb-4">
-        <span className="text-4xl mb-2 block">{direction.icon}</span>
-        <h3 className="text-lg font-semibold text-gray-900">{direction.label}</h3>
-        <p className="text-sm text-gray-500 mt-1">{direction.instruction}</p>
+      <div className="text-center mb-3">
+        <span className="text-3xl mb-1 block">{direction.icon}</span>
+        <h3 className="text-lg font-bold text-gray-900">{direction.label}</h3>
+        <p className="text-sm text-gray-500">{direction.instruction}</p>
       </div>
 
-      {/* Camera View */}
-      <div className="camera-container relative bg-black rounded-2xl overflow-hidden mb-4">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="webcam-video w-full"
-        />
+      {/* Camera */}
+      <div className="relative bg-black rounded-2xl overflow-hidden mb-4 shadow-lg" style={{ minHeight: '300px' }}>
+        <video ref={videoRef} autoPlay playsInline muted className="w-full rounded-2xl"
+          style={{ transform: 'scaleX(-1)' }} />
 
-        {/* Face guide overlay */}
-        <div className={`face-overlay ${status === 'verified' ? 'verified' : status === 'failed' ? 'failed' : ''}`} />
+        {/* Loading overlay */}
+        {!isActive && !error && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 rounded-2xl z-10">
+            <div className="w-10 h-10 border-4 border-blue-300 border-t-blue-600 rounded-full animate-spin mb-3" />
+            <p className="text-white font-medium">Starting camera...</p>
+          </div>
+        )}
 
-        {/* Scan line when scanning */}
-        {status === 'scanning' && <div className="scan-line" />}
+        {/* Face guide oval */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className={`w-44 h-56 sm:w-52 sm:h-64 rounded-[50%] border-[3px] border-dashed transition-all duration-500 ${guideColor}`} />
+        </div>
 
-        {/* Countdown overlay */}
-        {countdown !== null && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40">
-            <span className="text-6xl font-bold text-white drop-shadow-lg">{countdown}</span>
+        {/* Face detection badge */}
+        {isActive && !isCaptured && !isDone && (
+          <div className="absolute top-3 right-3 z-10">
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium backdrop-blur-sm ${
+              faceDetected ? 'bg-green-500/80 text-white' : 'bg-gray-600/80 text-white'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${faceDetected ? 'bg-green-300 animate-pulse' : 'bg-gray-300 animate-pulse'}`} />
+              {faceDetected ? 'Face ✓' : 'No face'}
+            </div>
+          </div>
+        )}
+
+        {/* Countdown */}
+        {isCountdown && countdown > 0 && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-20 h-20 rounded-full bg-green-600/70 backdrop-blur-sm flex items-center justify-center shadow-lg">
+              <span className="text-4xl font-bold text-white">{countdown}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Scan line */}
+        {isCountdown && (
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            <div className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-green-400 to-transparent opacity-80"
+              style={{ animation: 'scanLine 1.5s ease-in-out infinite' }} />
+          </div>
+        )}
+
+        {/* Flash on capture */}
+        {isCaptured && <div className="absolute inset-0 bg-white/40 pointer-events-none" style={{ animation: 'flashFade 0.4s ease-out' }} />}
+
+        {/* Success check */}
+        {isCaptured && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="bg-green-500/90 rounded-full w-16 h-16 flex items-center justify-center" style={{ animation: 'scaleIn 0.3s ease-out' }}>
+              <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+          </div>
+        )}
+
+        {/* Done overlay */}
+        {isDone && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="text-center">
+              <div className="bg-green-500 rounded-full w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <p className="text-white font-semibold text-lg">All captures complete!</p>
+              <p className="text-white/70 text-sm">Processing your face data...</p>
+            </div>
           </div>
         )}
       </div>
 
       {/* Status */}
       <div className="text-center mb-4">
-        <StatusBadge
-          status={status}
-          message={
-            status === 'scanning'
-              ? 'Scanning...'
-              : status === 'verified'
-              ? 'Captured!'
-              : status === 'failed'
-              ? 'No face detected. Try again.'
-              : 'Position your face and click Capture'
-          }
-        />
+        <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 ${statusMsg.cls}`}>
+          {statusMsg.text}
+        </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex gap-3 justify-center">
-        {onCancel && (
-          <button
-            onClick={onCancel}
-            className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            Cancel
-          </button>
-        )}
-
-        {status === 'failed' ? (
-          <button
-            onClick={handleRetry}
-            className="px-6 py-2.5 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors"
-          >
-            Retry
-          </button>
-        ) : (
-          <button
-            onClick={handleCapture}
-            disabled={!isActive || status === 'scanning' || status === 'verified'}
-            className="px-8 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
-          >
-            {status === 'scanning' ? 'Capturing...' : `Capture ${direction.label}`}
-          </button>
-        )}
-      </div>
-
-      {/* Captured thumbnails */}
-      {capturedImages.length > 0 && (
-        <div className="mt-6">
-          <p className="text-sm text-gray-500 mb-2">Captured ({capturedImages.length}/4):</p>
-          <div className="flex gap-2 justify-center">
-            {capturedImages.map((img, i) => (
-              <img
-                key={i}
-                src={img}
-                alt={`Capture ${i + 1}`}
-                className="w-16 h-16 object-cover rounded-lg border-2 border-green-400"
-              />
-            ))}
+      {/* Thumbnails */}
+      <div className="flex gap-2 justify-center mb-4">
+        {capturedImages.map((img, i) => (
+          <div key={i} className="relative">
+            <img src={img} alt={`Capture ${i + 1}`}
+              className="w-14 h-14 object-cover rounded-lg border-2 border-green-400 shadow-md"
+              style={{ transform: 'scaleX(-1)' }} />
+            <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
           </div>
+        ))}
+        {Array.from({ length: 4 - capturedImages.length }).map((_, i) => (
+          <div key={`e-${i}`} className="w-14 h-14 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center">
+            <span className="text-gray-300 text-xs">{capturedImages.length + i + 1}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Cancel */}
+      {onCancel && !isDone && (
+        <div className="text-center">
+          <button onClick={onCancel} className="px-6 py-2 text-gray-500 hover:text-gray-700 text-sm transition-colors">
+            ← Cancel
+          </button>
         </div>
       )}
+
+      <style>{`
+        @keyframes scanLine { 0% { top: 0; } 50% { top: 100%; } 100% { top: 0; } }
+        @keyframes scaleIn { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+        @keyframes flashFade { 0% { opacity: 1; } 100% { opacity: 0; } }
+      `}</style>
     </div>
   );
 };

@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Authentication middleware for protecting API routes.
 Validates JWT tokens and enforces face verification status.

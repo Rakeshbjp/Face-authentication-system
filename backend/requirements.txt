@@ -32,8 +32,5 @@ python-multipart>=0.0.6
 # Logging & Utilities
 python-dotenv>=1.0.0
 
-# Production Server
-gunicorn>=21.2.0
-
-# DNS resolution for MongoDB Atlas (mongodb+srv://)
-dnspython>=2.4.0
+# Production Server (Linux only — skip on Windows)
+# gunicorn>=21.2.0

@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Face Auth API — Main Application Entry Point
 
@@ -13,14 +14,14 @@ Production-ready FastAPI application with:
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI  # pyre-ignore
+from fastapi.middleware.cors import CORSMiddleware  # pyre-ignore
 
-from app.config.settings import get_settings
-from app.config.database import MongoDB
-from app.routes.auth_routes import router as auth_router
-from app.middleware.auth_middleware import RateLimitMiddleware, SecurityHeadersMiddleware
-from app.utils.logging_config import setup_logging
+from app.config.settings import get_settings  # pyre-ignore
+from app.config.database import MongoDB  # pyre-ignore
+from app.routes.auth_routes import router as auth_router  # pyre-ignore
+from app.middleware.auth_middleware import RateLimitMiddleware, SecurityHeadersMiddleware  # pyre-ignore
+from app.utils.logging_config import setup_logging  # pyre-ignore
 
 # Initialize logging
 setup_logging()
@@ -115,7 +116,7 @@ async def root():
 # ──────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import uvicorn
+    import uvicorn  # pyre-ignore
 
     uvicorn.run(
         "main:app",

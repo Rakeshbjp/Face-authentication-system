@@ -1,20 +1,20 @@
 # ─────────────────────────────────────────────────
-#  Face Auth — Render.com Deployment Blueprint
+#  Render Blueprint — Face Auth Backend
+#  Docs: https://docs.render.com/blueprint-spec
 # ─────────────────────────────────────────────────
-# Deploy: Push to GitHub → Connect repo on render.com
-# Render reads this file and auto-configures services.
 
 services:
-  # ── Backend API ──
   - type: web
-    name: face-auth-api
-    runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
+    name: face-auth-backend
+    runtime: python
     region: oregon
     plan: free
-    healthCheckPath: /api/auth/health
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.6"
       - key: APP_NAME
         value: "Face Auth API"
       - key: APP_VERSION
@@ -24,7 +24,7 @@ services:
       - key: ENVIRONMENT
         value: "production"
       - key: MONGODB_URL
-        sync: false  # Set manually in Render dashboard
+        sync: false  # Must be set manually (MongoDB Atlas connection string)
       - key: MONGODB_DB_NAME
         value: "face_auth_db"
       - key: JWT_SECRET_KEY
@@ -46,8 +46,6 @@ services:
       - key: RATE_LIMIT_WINDOW_SECONDS
         value: "60"
       - key: CORS_ORIGINS
-        sync: false  # Set to your Vercel frontend URL in Render dashboard
+        sync: false  # Must be set to your Vercel frontend URL
       - key: LOG_LEVEL
         value: "INFO"
-      - key: PORT
-        value: "8000"

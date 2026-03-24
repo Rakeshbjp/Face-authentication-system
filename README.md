@@ -1,283 +1,255 @@
-# Face Recognition Authentication System
+# 🔐 Face & GeoMap Authentication System
 
-A production-ready, full-stack face recognition authentication module built with **React.js**, **FastAPI**, **MongoDB**, and **DeepFace (Facenet512)**.
+A **production-ready**, full-stack face recognition authentication system with **location-based login enforcement**. Users register with their face + GPS coordinates, and can only login from their registered location.
 
----
-
-## Features
-
-- **Dual Authentication** — Email/password + mandatory face verification
-- **Multi-Angle Face Capture** — 4-direction registration (front, left, right, up/down)
-- **Liveness Detection** — Anti-spoofing checks (positional variance + identity consistency)
-- **Encrypted Embeddings** — Face data stored as AES-encrypted vectors, never raw images
-- **Real-Time Verification** — Sub-2-second face matching using cosine similarity
-- **JWT Auth** — Access + refresh tokens with secure expiration
-- **Rate Limiting** — Per-IP request throttling
-- **Security Headers** — HSTS, X-Frame-Options, CSP
-- **Responsive** — Works on mobile, tablet, and desktop browsers
+![Tech Stack](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![MongoDB](https://img.shields.io/badge/MongoDB-4EA94B?style=for-the-badge&logo=mongodb&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)
 
 ---
 
-## Tech Stack
+## ✨ Key Features
+
+### 🧑‍💻 Face Recognition Authentication
+- **Multi-angle face capture** during registration (front, left, right, up)
+- **Real-time face verification** with continuous auto-scanning during login
+- **Liveness detection** to prevent spoofing (blink detection, head position checks)
+- **YuNet + SFace ONNX models** — zero-compilation, lightweight face detection & recognition
+- **AES-256 encrypted** face embeddings stored in MongoDB
+
+### 📍 Location-Based Login (GeoMap)
+- **GPS geofencing** — users can only login within **100m** of their registered location
+- **Real-time location detection** using browser Geolocation API
+- **Live interactive map** with OpenStreetMap showing registered vs current location
+- **Distance calculation** using Haversine formula
+- **Location mismatch popup** — shows exact distance, both coordinates, and re-registration prompt
+- **Both password-login AND face-login** enforce location checks
+
+### 🔒 Security
+- **JWT authentication** with access + refresh tokens
+- **Bcrypt password hashing**
+- **Rate limiting middleware**
+- **Security headers** (HSTS, X-Frame-Options, CSP)
+- **CORS configuration**
+- **Encrypted face data at rest** (Fernet/AES-128-CBC)
+
+---
+
+## 🏗️ Tech Stack
 
 | Layer | Technology |
-| ------- | ----------- |
-| Frontend | React 18, React Router, Tailwind CSS, Vite |
-| Backend | Python 3.11, FastAPI, Uvicorn |
-| Database | MongoDB 7 (Motor async driver) |
-| Face AI | DeepFace (Facenet512 model) |
-| Security | bcrypt, PyJWT, Fernet encryption |
-| DevOps | Nginx (optional), Uvicorn |
+|-------|-----------|
+| **Frontend** | React 18, Vite, TailwindCSS, React Router, React Hot Toast |
+| **Backend** | Python 3.11+, FastAPI, Uvicorn, Motor (async MongoDB) |
+| **Database** | MongoDB |
+| **Face Recognition** | OpenCV DNN (YuNet face detector + SFace face recognizer) |
+| **Maps** | Leaflet.js + OpenStreetMap |
+| **Auth** | JWT (PyJWT), Bcrypt, Fernet encryption |
 
 ---
 
-## Project Structure
+## 📁 Project Structure
 
-```text
+```
 face-auth/
 ├── backend/
+│   ├── main.py                          # FastAPI entry point
 │   ├── app/
 │   │   ├── config/
-│   │   │   ├── settings.py          # Environment config (Pydantic)
-│   │   │   └── database.py          # MongoDB connection (Motor)
+│   │   │   ├── settings.py              # Environment config
+│   │   │   └── database.py              # MongoDB connection manager
 │   │   ├── models/
-│   │   │   └── user.py              # Pydantic schemas (request/response/DB)
-│   │   ├── services/
-│   │   │   ├── auth_service.py      # Registration, login, JWT, face verify
-│   │   │   └── face_recognition.py  # Embedding extraction, comparison, liveness
+│   │   │   └── user.py                  # Pydantic schemas + DB models
 │   │   ├── routes/
-│   │   │   └── auth_routes.py       # API endpoints
+│   │   │   └── auth_routes.py           # API endpoints
+│   │   ├── services/
+│   │   │   ├── auth_service.py          # Auth logic + location checks
+│   │   │   └── face_recognition.py      # Face detection & recognition
 │   │   ├── middleware/
-│   │   │   └── auth_middleware.py    # JWT guard, rate limiter, security headers
+│   │   │   └── auth_middleware.py        # JWT validation + rate limiting
 │   │   └── utils/
-│   │       ├── encryption.py        # Fernet embedding encryption/decryption
-│   │       └── logging_config.py    # Structured logging setup
-│   ├── main.py                      # FastAPI app entry point
+│   │       ├── encryption.py            # Face embedding encryption
+│   │       └── logging_config.py        # Structured logging
+│   ├── models/                          # ONNX model files
+│   │   ├── face_detection_yunet_*.onnx
+│   │   └── face_recognition_sface_*.onnx
 │   ├── requirements.txt
-│   └── .env.example
+│   └── .env                             # Environment variables
 ├── frontend/
 │   ├── src/
+│   │   ├── pages/
+│   │   │   ├── LoginPage.jsx            # Login with location check
+│   │   │   ├── RegisterPage.jsx         # Registration with GPS capture
+│   │   │   ├── LocationPage.jsx         # Live location map
+│   │   │   └── DashboardPage.jsx        # User dashboard
 │   │   ├── components/
 │   │   │   ├── face/
-│   │   │   │   ├── FaceCaptureRegistration.jsx  # 4-direction face capture
-│   │   │   │   └── FaceVerification.jsx         # Real-time face verify
-│   │   │   └── ui/
-│   │   │       ├── Navbar.jsx
-│   │   │       ├── Spinner.jsx
-│   │   │       └── StatusBadge.jsx
-│   │   ├── context/
-│   │   │   └── AuthContext.jsx      # Global auth state
+│   │   │   │   ├── FaceVerification.jsx # Real-time face verification
+│   │   │   │   └── FaceCaptureRegistration.jsx
+│   │   │   └── map/
+│   │   │       └── LocationMap.jsx      # Interactive OpenStreetMap
 │   │   ├── hooks/
-│   │   │   └── useCamera.js         # Webcam access hook
-│   │   ├── pages/
-│   │   │   ├── HomePage.jsx
-│   │   │   ├── LoginPage.jsx
-│   │   │   ├── RegisterPage.jsx
-│   │   │   └── DashboardPage.jsx
+│   │   │   ├── useGeolocation.js        # GPS tracking hook
+│   │   │   └── useCamera.js             # Camera access hook
 │   │   ├── services/
-│   │   │   ├── api.js               # Axios instance
-│   │   │   └── authService.js       # API call wrappers
-│   │   ├── App.jsx
-│   │   ├── main.jsx
-│   │   └── index.css
+│   │   │   └── authService.js           # API client
+│   │   └── context/
+│   │       └── AuthContext.jsx          # Auth state management
 │   ├── package.json
-│   ├── vite.config.js
-│   ├── tailwind.config.js
-│   └── nginx.conf
+│   └── vite.config.js
 └── README.md
 ```
 
 ---
 
-## MongoDB User Schema
-
-```json
-{
-  "_id": "ObjectId",
-  "name": "John Doe",
-  "email": "john@example.com",
-  "phone": "+1234567890",
-  "password_hash": "$2b$12$...",
-  "face_embeddings": [
-    "gAAAAABl...encrypted_vector_1...",
-    "gAAAAABl...encrypted_vector_2...",
-    "gAAAAABl...encrypted_vector_3...",
-    "gAAAAABl...encrypted_vector_4..."
-  ],
-  "liveness_verified": true,
-  "created_at": "2026-03-02T10:00:00Z",
-  "updated_at": "2026-03-02T10:00:00Z"
-}
-```
-
----
-
-## API Endpoints
-
-| Method | Endpoint | Description | Auth |
-| -------- | ---------- | ------------- | ------ |
-| POST | `/api/auth/register` | Register with face images | Public |
-| POST | `/api/auth/login` | Login with email + password | Public |
-| POST | `/api/auth/verify-face` | Verify face after login | Public |
-| POST | `/api/auth/face-login` | Login using face only | Public |
-| GET | `/api/auth/profile` | Get user profile | JWT |
-| GET | `/api/auth/health` | Health check | Public |
-
----
-
-## Getting Started
+## 🚀 Getting Started
 
 ### Prerequisites
-
-- **Python 3.10+**
-- **Node.js 18+**
+- **Node.js** 18+ & npm
+- **Python** 3.11+
 - **MongoDB** (local or Atlas)
-- **Webcam** (for face capture)
 
-### 1. Clone & Setup
-
+### 1. Clone the Repository
 ```bash
-git clone <repository-url>
-cd face-auth
+git clone https://github.com/Rakeshbjp/Face_Giomap-authentication-system.git
+cd Face_Giomap-authentication-system
 ```
 
 ### 2. Backend Setup
-
 ```bash
 cd backend
 
 # Create virtual environment
 python -m venv venv
-
-# Activate (Windows)
-venv\Scripts\activate
-# Activate (macOS/Linux)
-source venv/bin/activate
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # macOS/Linux
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy environment file
+# Create .env file
 cp .env.example .env
-# Edit .env with your settings (especially JWT_SECRET_KEY and EMBEDDING_ENCRYPTION_KEY)
-
-# Start the server
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# Edit .env with your MongoDB URL and secrets
 ```
 
-The API will be available at `http://localhost:8000`. Swagger docs at `http://localhost:8000/docs` (only in DEBUG mode).
+**`.env` Configuration:**
+```env
+MONGODB_URL=mongodb://localhost:27017
+MONGODB_DB_NAME=face_auth
+JWT_SECRET_KEY=your-super-secret-key-change-this
+EMBEDDING_ENCRYPTION_KEY=your-encryption-key-change-this
+DEBUG=true
+HOST=0.0.0.0
+PORT=8000
+```
 
 ### 3. Frontend Setup
-
 ```bash
 cd frontend
 
 # Install dependencies
 npm install
-
-# Start dev server
-npm run dev
 ```
 
-The app will be available at `http://localhost:3000`.
-
-### 4. Start MongoDB
-
+### 4. Run the Application
 ```bash
-# Start local MongoDB service (if installed as a service)
-mongod
+# Terminal 1 — Backend
+cd backend
+venv\Scripts\python.exe main.py
+# Server starts at http://localhost:8000
 
-# Or use MongoDB Atlas: https://www.mongodb.com/atlas
-```
-
----
-
-## Deployment Guide
-
-### Railway / Render
-
-1. **Backend**: Deploy the `backend/` directory as a Python service
-   - Build command: `pip install -r requirements.txt`
-   - Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-   - Set all environment variables from `.env.example`
-
-2. **Frontend**: Deploy the `frontend/` directory as a static site
-   - Build command: `npm install && npm run build`
-   - Publish directory: `dist`
-   - Set `VITE_API_URL` to your backend URL
-
-3. **MongoDB**: Use [MongoDB Atlas](https://www.mongodb.com/atlas) free tier
-   - Update `MONGODB_URL` with your Atlas connection string
-
-### Vercel (Frontend Only)
-
-```bash
+# Terminal 2 — Frontend
 cd frontend
-npx vercel --prod
-```
-
-Set `VITE_API_URL` environment variable in Vercel dashboard.
-
----
-
-## Security Best Practices
-
-| Practice | Implementation |
-| ---------- | --------------- |
-| Password hashing | bcrypt with 12 salt rounds |
-| Token auth | JWT with short-lived access tokens (30 min) |
-| Face data | Encrypted with AES-128 (Fernet), never stored as images |
-| Anti-spoofing | Multi-angle liveness detection with positional variance check |
-| Rate limiting | Per-IP request throttling (100 req/min default) |
-| Security headers | HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff |
-| CORS | Strict origin allow-list |
-| Input validation | Pydantic models on every endpoint |
-| HTTPS | Enforced via proxy in production |
-| Replay prevention | Short JWT expiry + per-request token validation |
-
----
-
-## Environment Variables
-
-### Backend
-
-| Variable | Description | Default |
-| ---------- | ------------- | --------- |
-| `MONGODB_URL` | MongoDB connection string | `mongodb://localhost:27017` |
-| `MONGODB_DB_NAME` | Database name | `face_auth_db` |
-| `JWT_SECRET_KEY` | JWT signing secret | **Must change!** |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | Token lifetime | `30` |
-| `FACE_SIMILARITY_THRESHOLD` | Match threshold (0-1) | `0.75` |
-| `FACE_MODEL` | DeepFace model | `Facenet512` |
-| `EMBEDDING_ENCRYPTION_KEY` | AES encryption key | **Must change!** |
-| `RATE_LIMIT_REQUESTS` | Max requests per window | `100` |
-| `CORS_ORIGINS` | Allowed origins (comma-sep) | `http://localhost:3000` |
-| `DEBUG` | Enable debug mode | `False` |
-
-### Frontend
-
-| Variable       | Description          | Default |
-| -------------- | -------------------- | ------- |
-| `VITE_API_URL` | Backend API base URL | `/api`  |
-
----
-
-## Authentication Flow
-
-```text
-┌──────────────┐          ┌──────────────┐          ┌──────────────┐
-│   Register   │          │    Login     │          │  Dashboard   │
-│              │          │              │          │              │
-│ 1. Fill form │          │ 1. Email+Pwd │          │  ✅ Fully    │
-│ 2. Capture   │────→     │ 2. Face      │────→     │  Authenticated│
-│    4 faces   │          │    Verify    │          │              │
-│ 3. Liveness  │          │ 3. JWT issued│          │              │
-│    check     │          │              │          │              │
-└──────────────┘          └──────────────┘          └──────────────┘
+npm run dev
+# App opens at http://localhost:3000
 ```
 
 ---
 
-## License
+## 📡 API Endpoints
 
-MIT
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/auth/register` | Register new user with face images + location |
+| `POST` | `/api/auth/login` | Login with email/password + location check |
+| `POST` | `/api/auth/verify-face` | Verify face after password login |
+| `POST` | `/api/auth/face-login` | Direct face login + location check |
+| `GET` | `/api/auth/profile` | Get authenticated user profile |
+| `PUT` | `/api/auth/update-face` | Update face data |
+| `GET` | `/api/auth/health` | Health check |
+
+---
+
+## 🗺️ Location-Based Login Flow
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
+│  REGISTER   │     │    LOGIN     │     │  LOCATION CHECK │
+│             │     │              │     │                 │
+│ • Face data │────▶│ • Email/Pass │────▶│ • GPS detected  │
+│ • GPS saved │     │ • OR Face    │     │ • Compare with  │
+│ (lat, lng)  │     │ • GPS sent   │     │   registered    │
+└─────────────┘     └──────────────┘     │ • Distance ≤    │
+                                         │   100m? ✅ Pass  │
+                                         │ • Distance >    │
+                                         │   100m? ❌ Fail  │
+                                         └─────────────────┘
+```
+
+**If location mismatch:**
+- Shows **LOGIN FAILED** popup with:
+  - Distance from registered location
+  - Both GPS coordinates (registered vs current)
+  - Button to re-register from new location
+
+---
+
+## 🛡️ Security Architecture
+
+- **Passwords**: Bcrypt hashed (12 rounds)
+- **Face Embeddings**: AES-128-CBC encrypted at rest (Fernet)
+- **Tokens**: JWT with configurable expiry (access: 30min, refresh: 7days)
+- **Location**: GPS coordinates stored and compared using Haversine formula
+- **Rate Limiting**: Configurable per-IP request throttling
+- **Headers**: HSTS, X-Frame-Options DENY, X-XSS-Protection, no-cache
+
+---
+
+## 📸 Screenshots
+
+### Login Page with Location Detection
+- Real-time GPS coordinate display
+- Location mismatch error popup
+
+### Registration with GPS Capture
+- Multi-angle face capture (4 directions)
+- Location auto-captured during registration
+
+### Live Location Map
+- Interactive OpenStreetMap with registered vs current position
+- Distance and login eligibility indicator
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is for educational and demonstration purposes.
+
+---
+
+## 👤 Author
+
+**Rakesh** — [GitHub](https://github.com/Rakeshbjp)
+
+Built with ❤️ using FastAPI, React, OpenCV, and MongoDB.

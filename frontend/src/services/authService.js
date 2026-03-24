@@ -49,12 +49,24 @@ export const verifyFace = async (userId, faceImage) => {
  * @param {string} faceImage - Base64-encoded face image
  * @returns {Promise} API response with tokens
  */
-export const faceLogin = async (userId, faceImage) => {
-  const response = await api.post('/auth/face-login', {
-    user_id: userId,
-    face_image: faceImage,
-  });
-  return response.data;
+export const faceLogin = async (userId, faceImage, location = null) => {
+  try {
+    const payload = {
+      user_id: userId,
+      face_image: faceImage,
+    };
+    if (location) {
+      payload.location = location;
+    }
+    const response = await api.post('/auth/face-login', payload);
+    return response.data;
+  } catch (err) {
+    const detail = err.response?.data?.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((e) => e.msg).join(', ')
+      : detail || 'Face login failed';
+    return { status: false, message, confidence: null };
+  }
 };
 
 /**
@@ -72,5 +84,15 @@ export const getProfile = async () => {
  */
 export const healthCheck = async () => {
   const response = await api.get('/auth/health');
+  return response.data;
+};
+
+/**
+ * Add or update face data for the authenticated user.
+ * @param {string[]} faceImages - Array of 4 base64-encoded face images
+ * @returns {Promise} API response
+ */
+export const updateFaceData = async (faceImages) => {
+  const response = await api.put('/auth/update-face', { face_images: faceImages });
   return response.data;
 };

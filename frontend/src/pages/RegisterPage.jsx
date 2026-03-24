@@ -317,7 +317,7 @@ const RegisterPage = () => {
                     <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" />
                     <div className="flex-1">
                       <span className="font-medium">📍 Registration location captured</span>
-                      <p className="text-xs text-green-500 mt-0.5">You will only be able to login from this area (1km radius)</p>
+                      <p className="text-xs text-green-500 mt-0.5">You will only be able to login from this area (100m radius)</p>
                     </div>
                     <span className="text-xs text-green-500 font-mono">
                       {geoPosition.latitude.toFixed(4)}, {geoPosition.longitude.toFixed(4)}

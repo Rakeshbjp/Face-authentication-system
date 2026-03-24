@@ -1,69 +1,33 @@
 /**
  * Custom hook for managing webcam access and face capture.
  *
- * Handles the common pitfalls on Windows + Chrome:
- * - React.StrictMode double-mount (open → close → re-open causes timeout)
- * - Camera driver needing time to release between sessions
- * - Multiple rapid getUserMedia calls locking the hardware
- *
- * Strategy: Single getUserMedia call with simple constraints, proper
- * cleanup sequencing, and a short hardware-release delay before retries.
+ * SIMPLE, RELIABLE approach:
+ * - Gets the camera stream via getUserMedia
+ * - Connects it to the video element
+ * - Relies on `autoPlay` attribute on <video> for playback
+ * - Sets isActive immediately so the UI doesn't hang
+ * - Captures frames via canvas from the live video
  */
 import { useState, useCallback, useRef, useEffect } from 'react';
 
-// Global mutex: prevents multiple hook instances from fighting over the camera.
-// Only one getUserMedia call can be in-flight at a time.
-let _cameraLock = false;
-let _lockQueue = [];
-
-function acquireLock() {
-  return new Promise((resolve) => {
-    if (!_cameraLock) {
-      _cameraLock = true;
-      resolve();
-    } else {
-      _lockQueue.push(resolve);
-    }
-  });
-}
-
-function releaseLock() {
-  if (_lockQueue.length > 0) {
-    const next = _lockQueue.shift();
-    next();
-  } else {
-    _cameraLock = false;
-  }
-}
-
-/**
- * Small helper — wait for `ms` milliseconds.
- */
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
 const useCamera = ({ autoStart = false, facingMode = 'user' } = {}) => {
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const mountedRef = useRef(true);
-  const startingRef = useRef(false); // prevent concurrent startCamera calls
 
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState(null);
   const [hasPermission, setHasPermission] = useState(null);
 
   /**
-   * Fully release the current camera stream and detach from the video element.
+   * Stop the camera and release all tracks.
    */
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => {
-        track.stop();
-      });
+      streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
     if (videoRef.current) {
-      videoRef.current.pause();
       videoRef.current.srcObject = null;
     }
     setIsActive(false);
@@ -71,115 +35,75 @@ const useCamera = ({ autoStart = false, facingMode = 'user' } = {}) => {
 
   /**
    * Start the camera stream.
-   *
-   * Uses simple constraints for maximum compatibility.
-   * Acquires a global lock so only one getUserMedia call runs at a time,
-   * and adds a short delay after cleanup to let the camera driver release.
    */
   const startCamera = useCallback(async () => {
-    // Prevent overlapping calls
-    if (startingRef.current) return;
-    startingRef.current = true;
-
     try {
       setError(null);
 
-      // Acquire the global camera lock
-      await acquireLock();
-
-      // Release any previous stream
-      stopCamera();
-
-      // Give the camera driver time to fully release (critical on Windows)
-      await wait(300);
-
-      if (!mountedRef.current) {
-        releaseLock();
-        startingRef.current = false;
-        return;
+      // Stop any existing stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       }
 
-      // Use the simplest constraints that work across all devices
+      if (!mountedRef.current) return;
+
+      // Get camera stream
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode },
+        video: { facingMode, width: { ideal: 640 }, height: { ideal: 480 } },
         audio: false,
       });
 
-      // Component might have unmounted during the async call
       if (!mountedRef.current) {
         stream.getTracks().forEach((t) => t.stop());
-        releaseLock();
-        startingRef.current = false;
         return;
       }
 
       streamRef.current = stream;
 
+      // Connect stream to video element — autoPlay on the element handles playback
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        try {
-          await videoRef.current.play();
-        } catch (playErr) {
-          if (playErr.name === 'AbortError') {
-            // play() was interrupted by a stop — expected in StrictMode
-            releaseLock();
-            startingRef.current = false;
-            return;
-          }
-          throw playErr;
-        }
       }
 
+      // Mark as active immediately. Don't wait for events —
+      // autoPlay on the <video> element handles rendering.
       if (mountedRef.current) {
         setIsActive(true);
         setHasPermission(true);
       }
-
-      releaseLock();
-      startingRef.current = false;
     } catch (err) {
-      releaseLock();
-      startingRef.current = false;
-
       if (!mountedRef.current) return;
-
       setIsActive(false);
 
       if (err.name === 'NotAllowedError') {
         setHasPermission(false);
-        setError(
-          'Camera permission denied. Please allow camera access in your browser settings and reload the page.'
-        );
+        setError('Camera permission denied. Allow camera access in browser settings and reload.');
       } else if (err.name === 'NotFoundError') {
         setHasPermission(false);
-        setError('No camera found. Please connect a camera and try again.');
+        setError('No camera found. Connect a camera and try again.');
       } else if (err.name === 'NotReadableError') {
-        // "Timeout starting video source" falls here
-        setHasPermission(true); // permission was granted, hardware issue
-        setError(
-          'Camera is busy. Close any other app using it (Zoom, Teams, etc.), then click Try Again.'
-        );
-      } else if (err.name === 'OverconstrainedError') {
         setHasPermission(true);
-        setError('Camera does not support the requested settings. Try Again.');
+        setError('Camera is busy. Close other apps using it (Zoom, Teams, etc.), then Try Again.');
       } else {
         setHasPermission(false);
         setError(`Camera error: ${err.message}`);
       }
     }
-  }, [facingMode, stopCamera]);
+  }, [facingMode]);
 
   /**
-   * Capture a frame from the video feed as a base64-encoded JPEG image.
+   * Capture a frame from the live video as a base64 JPEG.
    */
   const captureImage = useCallback(() => {
-    if (!videoRef.current || !isActive) return null;
-
     const video = videoRef.current;
-    const canvas = canvasRef.current || document.createElement('canvas');
+    if (!video || !isActive) return null;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return null;
+    if (video.readyState < 2) return null; // HAVE_CURRENT_DATA or better
 
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
     const ctx = canvas.getContext('2d');
     ctx.translate(canvas.width, 0);
@@ -187,28 +111,20 @@ const useCamera = ({ autoStart = false, facingMode = 'user' } = {}) => {
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-    return canvas.toDataURL('image/jpeg', 0.8);
+    return canvas.toDataURL('image/jpeg', 0.92);
   }, [isActive]);
 
   /**
    * Mount / unmount lifecycle.
-   *
-   * Uses a debounce timer so React.StrictMode's rapid unmount→remount
-   * doesn't cause two competing getUserMedia calls.
    */
   useEffect(() => {
     mountedRef.current = true;
 
-    // Delay the initial camera start to survive StrictMode double-mount.
-    // In dev, React unmounts then remounts — the first mount's start gets
-    // canceled by the cleanup, and only the second mount's timer fires.
     let timer;
     if (autoStart) {
       timer = setTimeout(() => {
-        if (mountedRef.current) {
-          startCamera();
-        }
-      }, 100);
+        if (mountedRef.current) startCamera();
+      }, 150);
     }
 
     return () => {
@@ -219,16 +135,7 @@ const useCamera = ({ autoStart = false, facingMode = 'user' } = {}) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return {
-    videoRef,
-    canvasRef,
-    isActive,
-    error,
-    hasPermission,
-    startCamera,
-    stopCamera,
-    captureImage,
-  };
+  return { videoRef, isActive, error, hasPermission, startCamera, stopCamera, captureImage };
 };
 
 export default useCamera;

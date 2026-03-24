@@ -136,11 +136,14 @@ const LoginPage = () => {
   const verifyFn = useCallback(
     async (uid, image) => {
       if (loginMode === 'face') {
-        return await faceLogin(uid, image);
+        const locationData = geoPosition
+          ? { latitude: geoPosition.latitude, longitude: geoPosition.longitude }
+          : null;
+        return await faceLogin(uid, image, locationData);
       }
       return await verifyFace(uid, image);
     },
-    [loginMode]
+    [loginMode, geoPosition]
   );
 
   /**
@@ -181,28 +184,81 @@ const LoginPage = () => {
           {/* ─── Location Mismatch Error Popup ─── */}
           {locationError && (
             <div className="mb-6 animate-fadeIn">
-              <div className="bg-red-50 border-2 border-red-200 rounded-xl p-5 text-center">
-                {/* Big FALSE icon */}
-                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 popup-icon-fail">
-                  <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+              <div className="bg-red-50 border-2 border-red-300 rounded-xl p-5 sm:p-6">
+                {/* Big FAIL icon */}
+                <div className="text-center mb-4">
+                  <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 popup-icon-fail">
+                    <svg className="w-12 h-12 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                  <h3 className="text-2xl font-extrabold text-red-600 mb-1">LOGIN FAILED</h3>
+                  <p className="text-sm font-bold text-red-500 uppercase tracking-wide">Location Mismatch Detected</p>
                 </div>
-                <h3 className="text-xl font-bold text-red-600 mb-1">✗ LOGIN FAILED</h3>
-                <p className="text-sm font-semibold text-red-500 mb-2">Location Mismatch</p>
-                <p className="text-sm text-red-700/80 mb-4 leading-relaxed">
-                  {locationError}
-                </p>
+
+                {/* Distance info */}
+                {(() => {
+                  const distMatch = locationError.match(/(\d+)m away/);
+                  const maxMatch = locationError.match(/Max allowed: (\d+)m/);
+                  const regMatch = locationError.match(/Registered: \(([-\d.]+), ([-\d.]+)\)/);
+                  const curMatch = locationError.match(/Current: \(([-\d.]+), ([-\d.]+)\)/);
+                  const dist = distMatch ? distMatch[1] : null;
+                  const maxDist = maxMatch ? maxMatch[1] : null;
+
+                  return (
+                    <div className="space-y-3 mb-4">
+                      {/* Distance badge */}
+                      {dist && (
+                        <div className="bg-red-100 rounded-lg p-3 text-center">
+                          <p className="text-3xl font-extrabold text-red-600">
+                            {parseInt(dist) >= 1000 ? `${(parseInt(dist)/1000).toFixed(1)} km` : `${dist}m`}
+                          </p>
+                          <p className="text-xs text-red-500 font-medium mt-1">
+                            away from registered location {maxDist && `(max ${maxDist}m allowed)`}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Location comparison */}
+                      <div className="grid grid-cols-2 gap-2">
+                        {regMatch && (
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
+                            <p className="text-xs font-semibold text-green-600 mb-1">📍 Registered Location</p>
+                            <p className="text-xs font-mono text-green-700">{parseFloat(regMatch[1]).toFixed(4)}</p>
+                            <p className="text-xs font-mono text-green-700">{parseFloat(regMatch[2]).toFixed(4)}</p>
+                          </div>
+                        )}
+                        {curMatch && (
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
+                            <p className="text-xs font-semibold text-red-600 mb-1">📍 Your Current Location</p>
+                            <p className="text-xs font-mono text-red-700">{parseFloat(curMatch[1]).toFixed(4)}</p>
+                            <p className="text-xs font-mono text-red-700">{parseFloat(curMatch[2]).toFixed(4)}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Message */}
+                <div className="bg-red-100/50 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-red-700 leading-relaxed text-center">
+                    <strong>You can only login from your registered location.</strong><br />
+                    To login from this new location, you must register a new account first.
+                  </p>
+                </div>
+
+                {/* Actions */}
                 <div className="flex flex-col gap-2">
                   <a
                     href="/register"
-                    className="inline-block px-5 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-semibold"
+                    className="block text-center px-5 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-bold shadow-lg"
                   >
-                    Register from this location →
+                    🔄 Register New Account from This Location
                   </a>
                   <button
                     onClick={() => setLocationError(null)}
-                    className="text-sm text-red-400 hover:text-red-600 underline"
+                    className="text-sm text-red-400 hover:text-red-600 underline py-1"
                   >
                     Dismiss
                   </button>

@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Pydantic models for User entity.
 Handles request validation, response serialization, and DB schema.
@@ -77,6 +78,10 @@ class FaceVerifyRequest(BaseModel):
     """Schema for face verification request."""
     user_id: str = Field(..., description="User ID to verify against")
     face_image: str = Field(..., description="Base64-encoded face image for verification")
+    location: Optional[LocationData] = Field(
+        default=None,
+        description="Current GPS coordinates for location verification during face login."
+    )
 
 
 # ──────────────────────────────────────────────

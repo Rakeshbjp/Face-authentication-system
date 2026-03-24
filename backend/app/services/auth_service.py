@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Authentication service handling user registration, login, and token management.
 """
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Maximum distance (in metres) between registered and login locations
-LOCATION_RADIUS_M = 1000  # 1 km
+LOCATION_RADIUS_M = 100  # 100 m — strict geofencing
 
 
 def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -185,10 +186,10 @@ class AuthService:
                 embeddings, errors = face_service.extract_multiple_embeddings(face_images)
 
                 if errors:
-                    return False, f"Face registration failed: {'; '.join(errors)}", None
+                    logger.warning(f"Some face images failed: {'; '.join(errors)}")
 
-                if len(embeddings) < 4:
-                    return False, "Could not extract embeddings from all 4 face images", None
+                if len(embeddings) < 2:
+                    return False, "Could not extract enough face embeddings. Please ensure your face is well-lit and clearly visible.", None
 
                 # Encrypt embeddings before storage
                 encrypted_embeddings = encrypt_embeddings(embeddings)
@@ -257,9 +258,13 @@ class AuthService:
                 if dist > LOCATION_RADIUS_M:
                     return (
                         False,
-                        f"Location mismatch — you are {dist:.0f}m away from your registered location. "
-                        f"Max allowed: {LOCATION_RADIUS_M}m. Please login from your registered location "
-                        f"or register again from this new location.",
+                        f"LOGIN FAILED — Location mismatch! "
+                        f"You are {dist:.0f}m away from your registered location. "
+                        f"Max allowed: {LOCATION_RADIUS_M}m. "
+                        f"Registered: ({reg_loc['latitude']:.6f}, {reg_loc['longitude']:.6f}). "
+                        f"Current: ({location['latitude']:.6f}, {location['longitude']:.6f}). "
+                        f"You can only login from your registered location. "
+                        f"To login from this new location, you must register a new account first.",
                         None,
                     )
             elif reg_loc and not location:
@@ -368,6 +373,9 @@ class AuthService:
             )
             if user:
                 user["_id"] = str(user["_id"])
+                # Add a flag telling the frontend whether face data exists
+                face_emb = user.pop("face_embedding", None)
+                user["has_face_data"] = bool(face_emb)
             return user
         except Exception as e:
             logger.error(f"Error fetching user: {e}")

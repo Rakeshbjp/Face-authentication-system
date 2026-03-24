@@ -40,7 +40,7 @@ const LocationPage = () => {
     );
   }, [position, registeredLocation]);
 
-  const isWithinRange = distance !== null ? distance <= 1000 : null;
+  const isWithinRange = distance !== null ? distance <= 100 : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-indigo-900">
@@ -143,7 +143,7 @@ const LocationPage = () => {
               <div className="text-white">
                 <p className="text-sm sm:text-lg font-mono font-bold">{registeredLocation.latitude.toFixed(6)}</p>
                 <p className="text-sm sm:text-lg font-mono font-bold">{registeredLocation.longitude.toFixed(6)}</p>
-                <p className="text-xs text-white/50 mt-1">Login locked to this area (1km radius)</p>
+                <p className="text-xs text-white/50 mt-1">Login locked to this area (100m radius)</p>
               </div>
             ) : (
               <p className="text-white/60 text-sm">No registered location yet. Register a new account to lock your location.</p>
@@ -172,7 +172,7 @@ const LocationPage = () => {
                   {distance < 1000 ? `${distance.toFixed(0)}m` : `${(distance / 1000).toFixed(2)}km`}
                 </p>
                 <p className={`text-sm mt-1 ${isWithinRange ? 'text-green-300' : 'text-red-300'}`}>
-                  {isWithinRange ? '✓ Within login range' : '✗ Outside login range (max 1km)'}
+                  {isWithinRange ? '✓ Within login range' : '✗ Outside login range (max 100m)'}
                 </p>
               </div>
             ) : (
@@ -221,7 +221,7 @@ const LocationPage = () => {
         <div className="mt-4 text-center text-sm text-white/40">
           <p>
             Location data is used for authentication security only.
-            You can only login from within 1km of your registered location.
+            You can only login from within 100m of your registered location.
           </p>
         </div>
       </div>

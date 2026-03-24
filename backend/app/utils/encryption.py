@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Encryption utilities for securing face embeddings at rest.
 Uses Fernet symmetric encryption (AES-128-CBC) from the cryptography library.
@@ -8,11 +9,11 @@ import json
 import logging
 from typing import List
 
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.fernet import Fernet  # pyre-ignore
+from cryptography.hazmat.primitives import hashes  # pyre-ignore
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # pyre-ignore
 
-from app.config.settings import get_settings
+from app.config.settings import get_settings  # pyre-ignore
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

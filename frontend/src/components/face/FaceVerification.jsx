@@ -268,10 +268,7 @@ const FaceVerification = ({ userId, onVerified, onFailed, onCancel, onSkip, veri
                 </div>
                 <div className="mt-3 bg-white/95 px-6 py-3 rounded-xl shadow-lg text-center" style={{ animation: 'slideUp 0.3s ease-out' }}>
                   <p className="text-2xl font-extrabold text-green-600 mb-1">✓ TRUE</p>
-                  <p className="text-sm font-bold text-green-700">Face Verified!</p>
-                  {confidence !== null && (
-                    <p className="text-xs text-green-600 mt-1">Confidence: {(confidence * 100).toFixed(1)}%</p>
-                  )}
+                  <p className="text-sm font-bold text-green-700">Face Verified Successfully!</p>
                 </div>
               </>
             ) : (
@@ -284,11 +281,9 @@ const FaceVerification = ({ userId, onVerified, onFailed, onCancel, onSkip, veri
                 <div className="mt-3 bg-white/95 px-5 py-3 rounded-xl shadow-lg max-w-xs text-center" style={{ animation: 'slideUp 0.3s ease-out' }}>
                   <p className="text-2xl font-extrabold text-red-600 mb-1">✗ FALSE</p>
                   <p className="text-sm font-medium text-red-700 leading-snug">
-                    {message || 'Face Not Recognized'}
+                    {message || 'Face is not clearly visible'}
                   </p>
-                  {confidence !== null && (
-                    <p className="text-xs text-red-500 mt-1">Confidence: {(confidence * 100).toFixed(1)}%</p>
-                  )}
+                  <p className="text-xs text-red-400 mt-1">Keep your face still, clearly visible, with no obstructions</p>
                 </div>
                 {!autoScanEnabled && (
                   <button

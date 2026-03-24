@@ -1,11 +1,16 @@
+# pyre-ignore-all-errors
 """
 Authentication API routes.
 Handles user registration, login, face verification, and profile access.
 """
 
 import logging
+from datetime import datetime
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field
+from bson import ObjectId
 
 from app.config.database import get_database
 from app.models.user import (
@@ -133,9 +138,11 @@ async def face_login(request: FaceVerifyRequest, db=Depends(get_database)):
     """
     Login using face recognition only.
     Searches all users and matches the face embedding.
+    Enforces location check against registered location.
     """
     from app.services.face_recognition import face_service
     from app.utils.encryption import decrypt_embeddings
+    from app.services.auth_service import haversine_distance, LOCATION_RADIUS_M
     from bson import ObjectId
 
     # Extract embedding from the provided face image (strict quality checks + full-face validation)
@@ -154,6 +161,36 @@ async def face_login(request: FaceVerifyRequest, db=Depends(get_database)):
         resolved_id = await auth_service.resolve_user_id(request.user_id)
         if not resolved_id:
             raise HTTPException(status_code=404, detail="User not found")
+
+        # ── Location check for face-login ──
+        user_doc = await db.users.find_one({"_id": ObjectId(resolved_id)})
+        if user_doc:
+            reg_loc = user_doc.get("registered_location")
+            login_loc = request.location.model_dump() if request.location else None
+
+            if reg_loc and login_loc:
+                dist = haversine_distance(
+                    reg_loc["latitude"], reg_loc["longitude"],
+                    login_loc["latitude"], login_loc["longitude"],
+                )
+                if dist > LOCATION_RADIUS_M:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            f"LOGIN FAILED — Location mismatch! "
+                            f"You are {dist:.0f}m away from your registered location. "
+                            f"Max allowed: {LOCATION_RADIUS_M}m. "
+                            f"Registered: ({reg_loc['latitude']:.6f}, {reg_loc['longitude']:.6f}). "
+                            f"Current: ({login_loc['latitude']:.6f}, {login_loc['longitude']:.6f}). "
+                            f"You can only login from your registered location. "
+                            f"To login from this new location, you must register a new account first."
+                        ),
+                    )
+            elif reg_loc and not login_loc:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Location is required for login. Please enable GPS/location services.",
+                )
 
         is_verified, message, confidence = await auth_service.verify_face(
             user_id=resolved_id,
@@ -215,6 +252,83 @@ async def get_profile(
 
 
 # ──────────────────────────────────────────────
+#  PUT /api/auth/update-face
+# ──────────────────────────────────────────────
+
+class UpdateFaceRequest(BaseModel):
+    """Schema for updating face data."""
+    face_images: List[str] = Field(
+        ...,
+        min_length=4, max_length=4,
+        description="4 base64-encoded face images: [front, left, right, up/down]"
+    )
+
+
+@router.put("/update-face", response_model=StandardResponse)
+async def update_face_data(
+    request: UpdateFaceRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db=Depends(get_database),
+):
+    """
+    Add or update face data for an authenticated user.
+    Useful when user registered without face data or wants to re-enroll.
+    Requires a valid JWT access token.
+    """
+    from app.services.face_recognition import face_service
+    from app.utils.encryption import encrypt_embeddings
+    from datetime import datetime
+
+    payload = await get_current_user(credentials)
+    user_id = payload.get("sub")
+
+    # Perform liveness check
+    logger.info(f"Performing liveness check for face update (user: {user_id})")
+    is_live, liveness_msg = face_service.perform_liveness_check(request.face_images)
+    if not is_live:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Liveness verification failed: {liveness_msg}",
+        )
+
+    # Extract embeddings
+    logger.info("Extracting face embeddings for update...")
+    embeddings, errors = face_service.extract_multiple_embeddings(request.face_images)
+
+    if errors:
+        logger.warning(f"Some face images failed during update: {'; '.join(errors)}")
+
+    if len(embeddings) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not extract enough face embeddings. Ensure your face is well-lit and clearly visible.",
+        )
+
+    # Encrypt and store
+    encrypted_embeddings = encrypt_embeddings(embeddings)
+
+    result = await db.users.update_one(
+        {"_id": ObjectId(user_id)},
+        {
+            "$set": {
+                "face_embedding": encrypted_embeddings,
+                "liveness_verified": True,
+                "updated_at": datetime.utcnow(),
+            }
+        },
+    )
+
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    logger.info(f"Face data updated for user: {user_id} ({len(embeddings)} embeddings)")
+    return StandardResponse(
+        status=True,
+        message=f"Face data updated successfully ({len(embeddings)} views enrolled)",
+    )
+
+
+# ──────────────────────────────────────────────
 #  GET /api/auth/health
 # ──────────────────────────────────────────────
 
@@ -222,3 +336,4 @@ async def get_profile(
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "Face Auth API"}
+

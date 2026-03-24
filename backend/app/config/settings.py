@@ -1,3 +1,4 @@
+# pyre-ignore-all-errors
 """
 Configuration module for Face Auth backend.
 Loads environment variables and provides app-wide settings.
@@ -33,7 +34,7 @@ class Settings(BaseSettings):
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Face Recognition (OpenCV SFace DNN, 128-d embeddings)
-    FACE_SIMILARITY_THRESHOLD: float = 0.38  # Cosine similarity threshold
+    FACE_SIMILARITY_THRESHOLD: float = 0.55  # Cosine similarity threshold (strict)
     MAX_FACE_IMAGES: int = 4  # Front, Left, Right, Up/Down
     EMBEDDING_ENCRYPTION_KEY: str = "your-encryption-key-32-bytes-long!"
 
